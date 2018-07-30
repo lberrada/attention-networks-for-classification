@@ -5,6 +5,8 @@
 
 import numpy as np
 import pandas as pd
+import time
+import math
 
 import torch
 import torch.nn as nn
@@ -13,6 +15,7 @@ import torch.nn.functional as F
 from sklearn.cross_validation import train_test_split
 
 # ## Functions to accomplish attention
+
 
 def batch_matmul_bias(seq, weight, bias, nonlinearity=''):
     s = None
@@ -164,7 +167,8 @@ sent_attn = AttentionSentRNN(batch_size=64, sent_gru_hidden=100, word_gru_hidden
                              n_classes=10, bidirectional=True)
 
 
-def train_data(mini_batch, targets, word_attn_model, sent_attn_model, word_optimizer, sent_optimizer, criterion):
+def train_data(mini_batch, targets, word_attn_model, sent_attn_model,
+               word_optimizer, sent_optimizer, criterion):
     state_word = word_attn_model.init_hidden().cuda()
     state_sent = sent_attn_model.init_hidden().cuda()
     max_sents, batch_size, max_tokens = mini_batch.size()
@@ -217,24 +221,24 @@ sent_attn.cuda()
 
 d = pd.read_json('imdb_final.json')
 d['rating'] = d['rating'] - 1
-d = d[['tokens','rating']]
+d = d[['tokens', 'rating']]
 
 X = d.tokens
 y = d.rating
 
-X_train, X_test, y_train, y_test = train_test_split(X.values, y.values, test_size = 0.3, random_state= 42)
+X_train, X_test, y_train, y_test = train_test_split(X.values, y.values, test_size=0.3, random_state=42)
 
 
 def pad_batch(mini_batch):
     mini_batch_size = len(mini_batch)
     max_sent_len = int(np.mean([len(x) for x in mini_batch]))
     max_token_len = int(np.mean([len(val) for sublist in mini_batch for val in sublist]))
-    main_matrix = np.zeros((mini_batch_size, max_sent_len, max_token_len), dtype= np.int)
+    main_matrix = np.zeros((mini_batch_size, max_sent_len, max_token_len), dtype=np.int)
     for i in range(main_matrix.shape[0]):
         for j in range(main_matrix.shape[1]):
             for k in range(main_matrix.shape[2]):
                 try:
-                    main_matrix[i,j,k] = mini_batch[i][j][k]
+                    main_matrix[i, j, k] = mini_batch[i][j][k]
                 except IndexError:
                     pass
     return Variable(torch.from_numpy(main_matrix).transpose(0, 1))
@@ -263,7 +267,7 @@ def test_accuracy_full_batch(tokens, labels, mini_batch_size, word_attn, sent_at
     p = np.array(p)
     l = np.array(l)
     num_correct = sum(p == l)
-    return float(num_correct)/ len(p)
+    return float(num_correct) / len(p)
 
 
 def test_data(mini_batch, targets, word_attn_model, sent_attn_model):
@@ -272,7 +276,7 @@ def test_data(mini_batch, targets, word_attn_model, sent_attn_model):
     max_sents, batch_size, max_tokens = mini_batch.size()
     s = None
     for i in range(max_sents):
-        _s, state_word, _ = word_attn_model(mini_batch[i,:,:].transpose(0, 1), state_word)
+        _s, state_word, _ = word_attn_model(mini_batch[i, :, :].transpose(0, 1), state_word)
         if(s is None):
             s = _s
         else:
@@ -295,22 +299,20 @@ def iterate_minibatches(inputs, targets, batchsize, shuffle=False):
         yield inputs[excerpt], targets[excerpt]
 
 
-def gen_minibatch(tokens, labels, mini_batch_size, shuffle= True):
-    for token, label in iterate_minibatches(tokens, labels, mini_batch_size, shuffle= shuffle):
+def gen_minibatch(tokens, labels, mini_batch_size, shuffle=True):
+    for token, label in iterate_minibatches(tokens, labels, mini_batch_size, shuffle=shuffle):
         token = pad_batch(token)
-        yield token.cuda(), Variable(torch.from_numpy(label), requires_grad= False).cuda()
+        yield token.cuda(), Variable(torch.from_numpy(label), requires_grad=False).cuda()
 
 
 def check_val_loss(val_tokens, val_labels, mini_batch_size, word_attn_model, sent_attn_model):
     val_loss = []
-    for token, label in iterate_minibatches(val_tokens, val_labels, mini_batch_size, shuffle= True):
-        val_loss.append(test_data(pad_batch(token).cuda(), Variable(torch.from_numpy(label), requires_grad= False).cuda(),
+    for token, label in iterate_minibatches(val_tokens, val_labels, mini_batch_size, shuffle=True):
+        val_loss.append(test_data(pad_batch(token).cuda(),
+                                  Variable(torch.from_numpy(label), requires_grad=False).cuda(),
                                   word_attn_model, sent_attn_model))
     return np.mean(val_loss)
 
-
-import time
-import math
 
 def timeSince(since):
     now = time.time()
@@ -324,19 +326,19 @@ def timeSince(since):
 
 def train_early_stopping(mini_batch_size, X_train, y_train, X_test, y_test, word_attn_model, sent_attn_model,
                          word_attn_optimiser, sent_attn_optimiser, loss_criterion, num_epoch,
-                         print_val_loss_every = 1000, print_loss_every = 50):
+                         print_val_loss_every=1000, print_loss_every=50):
     start = time.time()
     loss_full = []
     loss_epoch = []
     accuracy_epoch = []
-    loss_smooth = []
     accuracy_full = []
     epoch_counter = 0
     g = gen_minibatch(X_train, y_train, mini_batch_size)
     for i in range(1, num_epoch + 1):
         try:
             tokens, labels = next(g)
-            loss = train_data(tokens, labels, word_attn_model, sent_attn_model, word_attn_optimiser, sent_attn_optimiser, loss_criterion)
+            loss = train_data(tokens, labels, word_attn_model, sent_attn_model,
+                              word_attn_optimiser, sent_attn_optimiser, loss_criterion)
             acc = test_accuracy_mini_batch(tokens, labels, word_attn_model, sent_attn_model)
             accuracy_full.append(acc)
             accuracy_epoch.append(acc)
@@ -344,15 +346,17 @@ def train_early_stopping(mini_batch_size, X_train, y_train, X_test, y_test, word
             loss_epoch.append(loss)
             # print(loss every n passes)
             if i % print_loss_every == 0:
-                print('Loss at %d minibatches, %d epoch,(%s) is %f' %(i, epoch_counter, timeSince(start), np.mean(loss_epoch)))
+                print('Loss at %d minibatches, %d epoch,(%s) is %f'
+                      % (i, epoch_counter, timeSince(start), np.mean(loss_epoch)))
                 print('Accuracy at %d minibatches is %f' % (i, np.mean(accuracy_epoch)))
             # check validation loss every n passes
             if i % print_val_loss_every == 0:
                 val_loss = check_val_loss(X_test, y_test, mini_batch_size, word_attn_model, sent_attn_model)
                 print('Average training loss at this epoch..minibatch..%d..is %f' % (i, np.mean(loss_epoch)))
-                print('Validation loss after %d passes is %f' %(i, val_loss))
+                print('Validation loss after %d passes is %f' % (i, val_loss))
                 if val_loss > np.mean(loss_full):
-                    print('Validation loss is higher than training loss at %d is %f , stopping training!' % (i, val_loss))
+                    print('Validation loss is higher than training loss at %d is %f , stopping training!'
+                          % (i, val_loss))
                     print('Average training loss at %d is %f' % (i, np.mean(loss_full)))
         except StopIteration:
             epoch_counter += 1
@@ -364,8 +368,8 @@ def train_early_stopping(mini_batch_size, X_train, y_train, X_test, y_test, word
     return loss_full
 
 
-loss_full= train_early_stopping(64, X_train, y_train, X_test, y_test, word_attn, sent_attn, word_optmizer, sent_optimizer,
-                            criterion, 5000, 1000, 50)
+loss_full = train_early_stopping(64, X_train, y_train, X_test, y_test, word_attn, sent_attn,
+                                 word_optmizer, sent_optimizer, criterion, 5000, 1000, 50)
 
 test_accuracy_full_batch(X_test, y_test, 64, word_attn, sent_attn)
 
